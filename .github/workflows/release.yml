@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # The install script derives its download URL from the version in Cargo.toml, so
+  # a tag that disagrees with the manifest publishes assets nobody will ever fetch.
+  # Checked once, before anything is built.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: tag matches the manifests
+        run: |
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          plugin="$(sed -n 's/^version = "\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag crate=$crate plugin=$plugin"
+          test "$crate" = "$tag"
+          test "$plugin" = "$tag"
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      # The asset name is what scripts/fetch-binary.sh computes from uname.
+      - run: mv target/release/herdr-stash "herdr-stash-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: herdr-stash-${{ matrix.target }}
+          if-no-files-found: error
+
+  # Assets first, release last: a release that exists before its binaries are
+  # uploaded is a version someone can install nothing from.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag herdr-stash-*
+        env:
+          GH_TOKEN: ${{ github.token }}

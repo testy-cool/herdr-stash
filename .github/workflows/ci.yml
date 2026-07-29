@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        # GitHub-hosted runners, and the same two platforms a release asset is
+        # built for — so CI proves what an install would download.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # Build before lint, deliberately. With clippy first, a hard compile error
+      # in a file clippy also complains about stops the job at the lint step: the
+      # tree does not compile and CI reports only a lint failure.
+      - run: cargo build --release --locked
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked
+
+      # The install path itself, on the platform an install would run it. It is
+      # the only part of this repo a user executes before the plugin is
+      # registered, and the only step that can leave a plugin that does nothing.
+      - name: install script builds a usable binary
+        run: |
+          rm -rf bin
+          sh scripts/fetch-binary.sh
+          test -x bin/herdr-stash
+          ./bin/herdr-stash list

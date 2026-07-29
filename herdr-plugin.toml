@@ -1,0 +1,68 @@
+# herdr-plugin.toml — manifest for Stash.
+#
+# Install:
+#   herdr plugin install victor-software-house/herdr-stash
+#
+# Local development — `plugin link` does not run [[build]] steps, so build first:
+#   cargo build --release && mkdir -p bin && cp target/release/herdr-stash bin/
+#   herdr plugin link .
+#
+# Herdr keeps every workspace it has ever held and rebuilds all of them on every
+# start. The only way to shorten that list is to close a workspace, which loses
+# it. Upstream was asked for an archive section and closed the ask without a
+# design, so this is that middle: stop the processes, keep the shape and the
+# agents' conversations, restore later from a popup.
+
+id = "vsh.stash"
+name = "Stash"
+version = "0.0.1"
+min_herdr_version = "0.7.5"
+description = "Stash a workspace: stop its agents, keep its shape and their conversations, and restore it later from a clickable popup."
+platforms = ["linux", "macos"]
+
+# Download the released binary for this platform, and fall back to compiling only
+# when no asset matches. Either path leaves the binary at ./bin/, which is why the
+# commands below point there.
+[[build]]
+command = ["sh", "scripts/fetch-binary.sh"]
+
+[[actions]]
+id = "stash"
+title = "Stash: stop this workspace and keep it"
+# ▲ Never omit `description`. Herdr renders an action without one as the literal
+# string "custom command" in its help overlay.
+description = "Record this workspace's layout and agent conversations, then close it so its processes stop."
+contexts = ["workspace"]
+command = ["./bin/herdr-stash", "stash"]
+
+# Separate action rather than a prompt: an action has no TTY and therefore no way
+# to ask. The safe one refuses a workspace with an agent mid-turn, or one whose
+# agent has not reported a conversation yet; this is the same call for when
+# stopping it anyway is the point.
+[[actions]]
+id = "stash-force"
+title = "Stash: stop this workspace even mid-turn"
+description = "Stash this workspace without checking whether an agent is mid-turn or has reported a conversation."
+contexts = ["workspace"]
+command = ["./bin/herdr-stash", "stash-force"]
+
+[[actions]]
+id = "open"
+title = "Stash: open the stash picker"
+description = "Browse live workspaces and stashed ones side by side, then move them either way."
+contexts = ["workspace"]
+command = ["./bin/herdr-stash", "open"]
+
+# The popup. Plugin actions run server-side with no TTY, so anything interactive
+# has to live here — the `open` action above does nothing but ask for this pane.
+#
+# `placement = "popup"` is session-modal and leaves the tiled layout alone, which
+# is what a picker wants: it is not a panel to work beside, it is a decision to
+# make and dismiss. Sizes are percentages of the terminal area.
+[[panes]]
+id = "picker"
+title = "Stash"
+placement = "popup"
+width = "72%"
+height = "60%"
+command = ["./bin/herdr-stash", "picker"]

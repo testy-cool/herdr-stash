@@ -1,0 +1,32 @@
+[package]
+name = "herdr-stash"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/victor-software-house/herdr-stash"
+homepage = "https://github.com/victor-software-house/herdr-stash"
+description = "Stash a Herdr workspace: stop its agents, keep its shape and their conversations, and restore it later from a clickable popup."
+rust-version = "1.88"
+
+[dependencies]
+# The socket client, published from the monorepo this plugin is developed in.
+herdr-sdk = "0.0.1"
+
+anyhow = "1.0.104"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+# Herdr's own config format, and therefore this plugin's: its theme tokens are
+# read from the same `config.toml`.
+toml = "1.1.3"
+# `ratatui` re-exports the crossterm backend it depends on, so the backend crates
+# stay out of this manifest and cannot drift out of step with it.
+ratatui = "0.30.2"
+
+# Snappy is a build setting as much as a code one.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+# Not panic = "abort": a TUI that dies must restore the terminal on the way out,
+# and that runs in unwinding destructors.
