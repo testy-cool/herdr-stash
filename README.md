@@ -39,14 +39,12 @@ records on the right — because the work moves both ways and a list of only sta
 can show one direction of one verb. Check rows with `space` and move them together:
 left to right is stashing, right to left is restoring.
 
-```
-┌ live ────────────────── 13 ┐┌ stashed ──────────── 2 ┐
-│▸ [✔] indeed work                ││  [ ] Access          2h ago │
-│      ~/workspace/indeed ● claude││      ~/work/access ● pi ◧ 1 │
-│  [ ] ompex ▲ · here             ││  [✔] iterm2 theme    5h ago │
-└──────────────────────────────┘└──────────────────────────┘
- → stash 1   ← restore 1   d forget   esc close
-```
+![The picker: live workspaces on the left, stashed records on the right](assets/picker.png)
+
+Each row is two lines: the label with its badges, and underneath the directory,
+the pane count, the agents (`● pi`, `● claude`, `● omp`) and any plugin panes
+(`◧ 1`). `▲` marks an agent mid-turn, `· here` the workspace the picker was opened
+from, and a stashed row carries how long it has been parked.
 
 | Key | |
 |:--|:--|
