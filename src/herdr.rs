@@ -14,6 +14,7 @@ use anyhow::{Context as _, Result};
 use herdr_sdk::Client;
 use herdr_sdk::model::Pane;
 use serde::Deserialize;
+use std::path::Path;
 
 use crate::layout::{Direction, Layout};
 
@@ -76,6 +77,39 @@ impl ProcessInfo {
             .find(|process| process.pid == pid)
     }
 
+    /// The exact recognized agent process in this pane's foreground set.
+    ///
+    /// A Node launcher can be the foreground-group leader while its Codex or
+    /// Claude child is the process that owns the conversation. Matching the
+    /// executable name inside this already pane-scoped set avoids mistaking
+    /// that launcher, an MCP child, or stale pane metadata for the agent.
+    pub fn agent_process(&self, kind: &str) -> Option<&Process> {
+        self.foreground_processes
+            .iter()
+            .find(|process| process.program_name().as_deref() == Some(kind))
+    }
+
+    /// The exact agent argv without its executable, when the OS exposes it.
+    pub fn agent_argv(&self, kind: &str) -> Option<Vec<String>> {
+        let process = self.agent_process(kind)?;
+        let words = if let Some(argv) = process.argv.as_ref().filter(|argv| !argv.is_empty()) {
+            argv.clone()
+        } else if let Some(cmdline) = process.cmdline.as_deref() {
+            cmdline.split_whitespace().map(str::to_owned).collect()
+        } else {
+            return Some(Vec::new());
+        };
+        if words
+            .first()
+            .and_then(|program| Path::new(program).file_name())
+            .and_then(|program| program.to_str())
+            != Some(kind)
+        {
+            return None;
+        }
+        Some(words.into_iter().skip(1).collect())
+    }
+
     /// Whether this pane is sitting at its own prompt with nothing running in
     /// front of it.
     ///
@@ -136,6 +170,26 @@ pub struct Process {
     /// underneath it to read.
     pub argv: Option<Vec<String>>,
     pub cmdline: Option<String>,
+}
+
+impl Process {
+    fn program_name(&self) -> Option<String> {
+        let program = self
+            .argv
+            .as_ref()
+            .and_then(|argv| argv.first())
+            .map(String::as_str)
+            .or_else(|| {
+                self.cmdline
+                    .as_deref()
+                    .and_then(|cmdline| cmdline.split_whitespace().next())
+            })
+            .or(self.argv0.as_deref())?;
+        Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+    }
 }
 
 /// A pane entrypoint some installed plugin owns, keyed by the title Herdr shows

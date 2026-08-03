@@ -373,7 +373,9 @@ mod tests {
             ("wB:p1", "019fb885-2aec-7630-b03f-40a178ccbe77"),
             ("wB:p4", "019fbf6d-e5b4-7b53-951a-65c4c079a5d0"),
         ] {
-            let body = format!("# herdr-hibernate stub for pane {pane_id} — session {id}\nexport HERDR_HIBERNATE_STUB=1\n    exec codex resume {id} -s workspace-write\n");
+            let body = format!(
+                "# herdr-hibernate stub for pane {pane_id} — session {id}\nexport HERDR_HIBERNATE_STUB=1\n    exec codex resume {id} -s workspace-write\n"
+            );
             let session = parse_stub(&body, pane_id).unwrap();
             assert_eq!(session.kind, "codex");
             assert_eq!(session.id, id);

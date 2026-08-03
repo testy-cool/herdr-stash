@@ -26,6 +26,7 @@ mod hibernate;
 mod layout;
 mod live;
 mod msg;
+mod native;
 mod record;
 mod restore;
 mod store;

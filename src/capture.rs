@@ -402,12 +402,17 @@ impl Builder<'_, '_> {
                     match handoff {
                         Ok(handoff) => match handoff::resolve(pane, kind, handoff.as_ref())? {
                             Some(agent) => Some(agent),
-                            None if self.force => None,
-                            None => bail!(
-                                "{kind} in {} has no recoverable conversation, so stashing it would \
-                             close it for good — use the force action",
-                                pane.pane_id
-                            ),
+                            None => {
+                                match crate::native::discover(kind, pane, process_info.as_ref())? {
+                                    Some(agent) => Some(agent),
+                                    None if self.force => None,
+                                    None => bail!(
+                                        "{kind} in {} has no recoverable conversation, so stashing it would \
+                                 close it for good — use the force action",
+                                        pane.pane_id
+                                    ),
+                                }
+                            }
                         },
                         Err(_error) if self.force => None,
                         Err(error) => return Err(error),
@@ -445,33 +450,7 @@ fn argv(info: Option<&herdr::ProcessInfo>, kind: &str) -> Vec<String> {
     let Some(info) = info else {
         return Vec::new();
     };
-    let Some(leader) = info.leader() else {
-        return Vec::new();
-    };
-
-    // `argv` when Herdr has it; otherwise the flattened command line, which
-    // cannot recover an argument that contained a space. A flag lost is the same
-    // outcome as not capturing at all, which is the documented baseline — a
-    // shell-words parser for an already-flattened string would only be a more
-    // confident way to be wrong.
-    let words: Vec<String> = match &leader.argv {
-        Some(argv) if !argv.is_empty() => argv.clone(),
-        _ => match &leader.cmdline {
-            Some(cmdline) => cmdline.split_whitespace().map(str::to_owned).collect(),
-            None => return Vec::new(),
-        },
-    };
-
-    let mut words = words.into_iter();
-    let Some(program) = words.next() else {
-        return Vec::new();
-    };
-    // A rewritten title, a wrapper, or a login shell's `-zsh`: anything whose
-    // program name is not the agent's is not an argv this can reason about.
-    if program.rsplit('/').next() != Some(kind) {
-        return Vec::new();
-    }
-    words.collect()
+    info.agent_argv(kind).unwrap_or_default()
 }
 
 #[cfg(test)]
