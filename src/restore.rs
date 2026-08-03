@@ -21,7 +21,7 @@ use anyhow::{Context as _, Result};
 use herdr_sdk::Client;
 
 use crate::herdr;
-use crate::record::{Attached, Node, Pane, Stash};
+use crate::record::{Agent, Attached, Node, Pane, Stash};
 
 /// How long a freshly split pane is given to reach its prompt. Generous because
 /// the cost of being wrong is an agent that does not come back, and a shell that
@@ -123,7 +123,7 @@ pub fn restore(
                 label: agent.title.clone().unwrap_or_else(|| agent.kind.clone()),
             });
 
-            let Some(args) = agent.launch() else {
+            let Some(args) = launch_args(agent) else {
                 warnings.push(format!(
                     "{}: no resume form for this agent kind — left as a shell",
                     agent.kind
@@ -176,6 +176,22 @@ pub fn restore(
         agents: resumed,
         warnings,
     })
+}
+
+const MCP_USE_DEFAULT: &str = "--mcp-use-default";
+
+/// Add the local MCP-launcher bypass required for automatic Claude and Codex
+/// startup, while leaving the recorded/native resume contract untouched for
+/// every other agent kind.
+fn launch_args(agent: &Agent) -> Option<Vec<String>> {
+    let mut args = agent.launch()?;
+    if !matches!(agent.kind.as_str(), "claude" | "codex") {
+        return Some(args);
+    }
+
+    args.retain(|arg| arg != MCP_USE_DEFAULT);
+    args.insert(0, MCP_USE_DEFAULT.to_owned());
+    Some(args)
 }
 
 pub struct Restored {
@@ -318,6 +334,44 @@ fn free_name(kind: &str, taken: &mut Vec<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agent(kind: &str, argv: &[&str]) -> Agent {
+        Agent {
+            kind: kind.into(),
+            session_kind: "id".into(),
+            session: "session-id".into(),
+            title: None,
+            argv: argv.iter().map(|arg| (*arg).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn mcp_launcher_bypass_is_first_for_claude_and_codex() {
+        for kind in ["claude", "codex"] {
+            let args = launch_args(&agent(kind, &[])).unwrap();
+            assert_eq!(args.first().map(String::as_str), Some(MCP_USE_DEFAULT));
+            assert_eq!(args[1..], agent(kind, &[]).launch().unwrap());
+        }
+    }
+
+    #[test]
+    fn mcp_launcher_bypass_is_absent_for_other_agents() {
+        for kind in ["grok", "pi", "omp"] {
+            let args = launch_args(&agent(kind, &[])).unwrap();
+            assert!(!args.iter().any(|arg| arg == MCP_USE_DEFAULT));
+        }
+    }
+
+    #[test]
+    fn mcp_launcher_bypass_is_not_duplicated() {
+        let args = launch_args(&agent(
+            "claude",
+            &["--mcp-use-default", "--resume", "old", "--mcp-use-default"],
+        ))
+        .unwrap();
+
+        assert_eq!(args, ["--mcp-use-default", "--resume", "session-id",]);
+    }
 
     #[test]
     fn a_free_name_is_just_the_kind() {
