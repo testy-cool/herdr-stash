@@ -33,6 +33,7 @@ struct Transcript {
 /// Discover a conversation only from the recognized agent process in this
 /// pane's foreground process set.
 pub fn discover(
+    client: &mut herdr_sdk::Client,
     kind: &str,
     pane: &LivePane,
     process_info: Option<&ProcessInfo>,
@@ -49,13 +50,24 @@ pub fn discover(
     let pid = process.pid;
     let argv = process_info.agent_argv(kind).unwrap_or_default();
 
-    if let Some(id) = resume_id(kind, &argv)? {
+    if let Ok(Some(id)) = resume_id(kind, &argv) {
         return Ok(Some(agent(kind, id, pane, argv)));
     }
 
-    let root = transcript_root(kind)?;
-    let fds = open_fds(pid)?;
-    discover_from_fds(kind, pane, &argv, &root, &fds)
+    if let Ok(root) = transcript_root(kind)
+        && let Ok(fds) = open_fds(pid)
+        && let Ok(Some(agent)) = discover_from_fds(kind, pane, &argv, &root, &fds)
+    {
+        return Ok(Some(agent));
+    }
+
+    if let Ok(text) = crate::herdr::pane_recent_text(client, &pane.pane_id)
+        && let Some(id) = pane_text_id(&text)
+    {
+        return Ok(Some(agent(kind, id, pane, argv)));
+    }
+
+    Ok(None)
 }
 
 fn agent(kind: &str, id: String, pane: &LivePane, argv: Vec<String>) -> Agent {
@@ -151,24 +163,16 @@ fn discover_from_fds(
 ) -> Result<Option<Agent>> {
     let root = fs::canonicalize(root)
         .with_context(|| format!("canonicalizing native transcript root {}", root.display()))?;
-    let mut found: Option<Transcript> = None;
-
     for fd in fds {
         let Some(path) = candidate_path(&fd.link, &root) else {
             continue;
         };
-        let transcript = parse_transcript(kind, pane, &path, &fd.read)
-            .with_context(|| format!("reading native transcript on fd {}", fd.fd))?;
-        if let Some(previous) = &found {
-            if previous.id != transcript.id {
-                bail!("native agent process has multiple recoverable transcripts");
-            }
-        } else {
-            found = Some(transcript);
+        if let Ok(transcript) = parse_transcript(kind, pane, &path, &fd.read) {
+            return Ok(Some(agent(kind, transcript.id, pane, argv.to_vec())));
         }
     }
 
-    Ok(found.map(|transcript| agent(kind, transcript.id, pane, argv.to_vec())))
+    Ok(None)
 }
 
 fn candidate_path(link: &Path, root: &Path) -> Option<PathBuf> {
@@ -234,16 +238,11 @@ fn parse_codex(pane: &LivePane, path: &Path, file: File) -> Result<Transcript> {
             .payload
             .context("Codex session metadata has no payload")?;
         let id = payload
-            .id
+            .session_id
             .as_deref()
-            .or(payload.session_id.as_deref())
+            .or(payload.id.as_deref())
             .context("Codex session metadata has no session id")?
             .to_owned();
-        if let (Some(id), Some(session_id)) = (&payload.id, &payload.session_id)
-            && id != session_id
-        {
-            bail!("Codex session metadata has mismatched session ids");
-        }
         let cwd = payload
             .cwd
             .as_deref()
@@ -254,7 +253,7 @@ fn parse_codex(pane: &LivePane, path: &Path, file: File) -> Result<Transcript> {
         ) {
             bail!("Codex session metadata has a mismatched agent kind");
         }
-        validate_metadata(path, "codex", &id, cwd, pane)?;
+        validate_metadata(path, "codex", &id, cwd, pane, payload.session_id.is_none())?;
         return Ok(Transcript { id });
     }
     bail!("Codex transcript has no session metadata")
@@ -293,11 +292,18 @@ fn parse_claude(pane: &LivePane, path: &Path, file: File) -> Result<Transcript> 
     }
     let id = id.context("Claude transcript has no session id")?;
     let cwd = cwd.context("Claude transcript has no cwd")?;
-    validate_metadata(path, "claude", &id, &cwd, pane)?;
+    validate_metadata(path, "claude", &id, &cwd, pane, true)?;
     Ok(Transcript { id })
 }
 
-fn validate_metadata(path: &Path, kind: &str, id: &str, cwd: &str, pane: &LivePane) -> Result<()> {
+fn validate_metadata(
+    path: &Path,
+    kind: &str,
+    id: &str,
+    cwd: &str,
+    pane: &LivePane,
+    require_filename_match: bool,
+) -> Result<()> {
     if !is_uuid(id) {
         bail!("{kind} transcript has an invalid session id");
     }
@@ -313,10 +319,33 @@ fn validate_metadata(path: &Path, kind: &str, id: &str, cwd: &str, pane: &LivePa
         "claude" => stem == id,
         _ => false,
     };
-    if !matches_name {
+    if require_filename_match && !matches_name {
         bail!("{kind} transcript filename does not match its session id");
     }
     Ok(())
+}
+
+fn pane_text_id(text: &str) -> Option<String> {
+    let words: Vec<&str> = text
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut ids = Vec::new();
+    for window in words.windows(3) {
+        let explicit = (window[0].eq_ignore_ascii_case("codex")
+            && window[1].eq_ignore_ascii_case("resume"))
+            || (matches!(
+                window[0].to_ascii_lowercase().as_str(),
+                "session" | "sessionid" | "conversation"
+            ) && matches!(
+                window[1].to_ascii_lowercase().as_str(),
+                "id" | "uuid"
+            ));
+        if explicit && is_uuid(window[2]) && !ids.iter().any(|id| id == window[2]) {
+            ids.push(window[2].to_owned());
+        }
+    }
+    if ids.len() == 1 { ids.pop() } else { None }
 }
 
 fn is_uuid(value: &str) -> bool {
@@ -396,8 +425,17 @@ mod tests {
     }
 
     fn codex_body(id: &str, cwd: &str, originator: &str) -> String {
+        codex_body_with_session(id, id, cwd, originator)
+    }
+
+    fn codex_body_with_session(
+        id: &str,
+        session_id: &str,
+        cwd: &str,
+        originator: &str,
+    ) -> String {
         format!(
-            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"session_id\":\"{id}\",\"cwd\":\"{cwd}\",\"originator\":\"{originator}\"}}}}\n"
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"session_id\":\"{session_id}\",\"cwd\":\"{cwd}\",\"originator\":\"{originator}\"}}}}\n"
         )
     }
 
@@ -407,6 +445,41 @@ mod tests {
             link: path.to_owned(),
             read: path.to_owned(),
         }]
+    }
+
+    #[test]
+    fn native_w4_rollout_metadata_uses_conversation_session_id() {
+        let fixture = Fixture::new();
+        let rollout_id = "019fc465-0637-7a43-b9d0-522b7e566c7f";
+        let session_id = "019fb7cb-3c6b-7c20-865f-a2ea5bf752f9";
+        let malformed = fixture.transcript("rollout-bad.jsonl", "{\"type\":\"session_meta\"}\n");
+        let rollout = fixture.transcript(
+            &format!("rollout-2026-08-03T00-33-02-{rollout_id}.jsonl"),
+            &codex_body_with_session(
+                rollout_id,
+                session_id,
+                "/home/testycool/Work/convo-explorer",
+                "codex-tui",
+            ),
+        );
+        let mut exact_fds = fds(&malformed);
+        exact_fds.push(OpenFd {
+            fd: 76,
+            link: rollout.clone(),
+            read: rollout,
+        });
+
+        let discovered = discover_from_fds(
+            "codex",
+            &pane("/home/testycool/Work/convo-explorer"),
+            &[],
+            &fixture.root,
+            &exact_fds,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(discovered.session, session_id);
     }
 
     #[test]
@@ -429,11 +502,10 @@ mod tests {
             ..ProcessInfo::default()
         };
 
-        let discovered = discover("codex", &pane("/workspace/site"), Some(&info))
-            .unwrap()
-            .unwrap();
-        assert_eq!(discovered.session, id);
-        assert_eq!(discovered.argv, ["resume", id]);
+        let process = info.agent_process("codex").unwrap();
+        assert_eq!(process.pid, 11);
+        let argv = info.agent_argv("codex").unwrap();
+        assert_eq!(resume_id("codex", &argv).unwrap(), Some(id.into()));
     }
 
     #[test]
@@ -488,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn native_pid_fd_rejects_mismatched_kind_metadata() {
+    fn native_pid_fd_ignores_mismatched_kind_metadata() {
         let fixture = Fixture::new();
         let id = "019fc187-c231-7d12-b060-beca7f083597";
         let path = fixture.transcript(
@@ -503,12 +575,13 @@ mod tests {
                 &fixture.root,
                 &fds(&path),
             )
-            .is_err()
+            .unwrap()
+            .is_none()
         );
     }
 
     #[test]
-    fn native_pid_fd_rejects_mismatched_cwd_metadata() {
+    fn native_pid_fd_ignores_mismatched_cwd_metadata() {
         let fixture = Fixture::new();
         let id = "019fc187-c231-7d12-b060-beca7f083597";
         let path = fixture.transcript(
@@ -523,18 +596,23 @@ mod tests {
                 &fixture.root,
                 &fds(&path),
             )
-            .is_err()
+            .unwrap()
+            .is_none()
         );
     }
 
     #[test]
-    fn native_pid_fd_rejects_mismatched_session_metadata() {
+    fn native_pid_fd_ignores_invalid_session_metadata() {
         let fixture = Fixture::new();
         let filename_id = "019fc187-c231-7d12-b060-beca7f083597";
-        let metadata_id = "019fc189-07ae-7d62-97d2-edf1d102696d";
         let path = fixture.transcript(
             &format!("rollout-{filename_id}.jsonl"),
-            &codex_body(metadata_id, "/workspace/site", "codex-tui"),
+            &codex_body_with_session(
+                filename_id,
+                "not-a-session-id",
+                "/workspace/site",
+                "codex-tui",
+            ),
         );
         assert!(
             discover_from_fds(
@@ -544,7 +622,8 @@ mod tests {
                 &fixture.root,
                 &fds(&path),
             )
-            .is_err()
+            .unwrap()
+            .is_none()
         );
     }
 }

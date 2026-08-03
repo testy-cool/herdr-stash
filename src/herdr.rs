@@ -264,6 +264,43 @@ pub fn process_info(client: &mut Client, pane_id: &str) -> Result<ProcessInfo> {
     Ok(envelope.process_info)
 }
 
+/// Read recent text from one exact pane without exposing it to the caller.
+/// Native recovery only searches this returned text for explicit resume/session
+/// patterns after process-owned sources have been exhausted.
+pub fn pane_recent_text(client: &mut Client, pane_id: &str) -> Result<String> {
+    let value: serde_json::Value = client.call(
+        "pane.read",
+        serde_json::json!({
+            "pane_id": pane_id,
+            "source": "recent-unwrapped",
+            "lines": 120,
+        }),
+    )?;
+    let mut text = String::new();
+    collect_strings(&value, &mut text);
+    Ok(text)
+}
+
+fn collect_strings(value: &serde_json::Value, text: &mut String) {
+    match value {
+        serde_json::Value::String(value) => {
+            text.push_str(value);
+            text.push('\n');
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_strings(value, text);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                collect_strings(value, text);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
 /// Create a workspace, and return its id and the id of the pane it opens with.
 pub fn create_workspace(
     client: &mut Client,

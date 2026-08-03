@@ -393,29 +393,28 @@ impl Builder<'_, '_> {
                     argv: argv(process_info.as_ref(), kind),
                 }),
                 (Some(kind), None) => {
-                    let handoff = crate::store::find_handoff(
-                        &pane.workspace_id,
-                        &pane.tab_id,
-                        &pane.pane_id,
-                        kind,
-                    );
-                    match handoff {
-                        Ok(handoff) => match handoff::resolve(pane, kind, handoff.as_ref())? {
+                    if let Some(agent) =
+                        crate::native::discover(self.client, kind, pane, process_info.as_ref())?
+                    {
+                        Some(agent)
+                    } else {
+                        let handoff = crate::store::find_handoff(
+                            &pane.workspace_id,
+                            &pane.tab_id,
+                            &pane.pane_id,
+                            kind,
+                        )
+                        .ok()
+                        .flatten();
+                        match handoff::resolve(pane, kind, handoff.as_ref()).ok().flatten() {
                             Some(agent) => Some(agent),
-                            None => {
-                                match crate::native::discover(kind, pane, process_info.as_ref())? {
-                                    Some(agent) => Some(agent),
-                                    None if self.force => None,
-                                    None => bail!(
-                                        "{kind} in {} has no recoverable conversation, so stashing it would \
-                                 close it for good — use the force action",
-                                        pane.pane_id
-                                    ),
-                                }
-                            }
-                        },
-                        Err(_error) if self.force => None,
-                        Err(error) => return Err(error),
+                            None if self.force => None,
+                            None => bail!(
+                                "{kind} in {} has no recoverable conversation, so stashing it would \
+                             close it for good — use the force action",
+                                pane.pane_id
+                            ),
+                        }
                     }
                 }
                 _ => None,
