@@ -93,6 +93,34 @@ impl ProcessInfo {
             _ => false,
         }
     }
+
+    /// Whether Herdr Hibernate has replaced this pane's agent with its durable
+    /// resume stub.
+    ///
+    /// Hibernate itself uses these two markers when deciding whether a stub is
+    /// armed: the current per-pane script directory and the legacy
+    /// `hibernate-stub` process name. A hibernated pane has no live agent for
+    /// Herdr to report, so callers must not mistake it for an ordinary shell.
+    pub fn is_herdr_hibernate_stub(&self) -> bool {
+        self.foreground_processes.iter().any(|process| {
+            process
+                .cmdline
+                .as_deref()
+                .is_some_and(has_hibernate_stub_marker)
+                || process
+                    .argv0
+                    .as_deref()
+                    .is_some_and(has_hibernate_stub_marker)
+                || process
+                    .argv
+                    .as_ref()
+                    .is_some_and(|argv| argv.iter().any(|arg| has_hibernate_stub_marker(arg)))
+        })
+    }
+}
+
+fn has_hibernate_stub_marker(value: &str) -> bool {
+    value.contains("/herdr-hibernate/panes/") || value.contains("hibernate-stub")
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -423,4 +451,35 @@ fn direction_name(direction: Direction) -> &'static str {
 /// Connect, with the failure the operator can act on.
 pub fn client() -> Result<Client> {
     Client::connect().context("herdr-stash needs a running Herdr session")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognises_herdr_hibernate_stubs_without_flagging_other_bash_processes() {
+        let hibernated = ProcessInfo {
+            foreground_processes: vec![Process {
+                argv: Some(vec![
+                    "bash".into(),
+                    "/home/operator/.config/herdr-hibernate/panes/wG_p6.sh".into(),
+                ]),
+                cmdline: Some("bash /home/operator/.config/herdr-hibernate/panes/wG_p6.sh".into()),
+                ..Process::default()
+            }],
+            ..ProcessInfo::default()
+        };
+        let ordinary = ProcessInfo {
+            foreground_processes: vec![Process {
+                argv: Some(vec!["bash".into(), "/tmp/build.sh".into()]),
+                cmdline: Some("bash /tmp/build.sh".into()),
+                ..Process::default()
+            }],
+            ..ProcessInfo::default()
+        };
+
+        assert!(hibernated.is_herdr_hibernate_stub());
+        assert!(!ordinary.is_herdr_hibernate_stub());
+    }
 }

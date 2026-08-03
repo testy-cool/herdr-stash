@@ -124,8 +124,8 @@ loop with an `rm` in it — is worse than a prompt in the right directory.
 
 ## When it refuses
 
-A stash has to be undoable. Two situations are refused, and the
-*Stash: stop this workspace even mid-turn* action waives both:
+A stash has to be undoable. Three situations are refused, and the
+*Stash: stop this workspace even mid-turn* action waives all three:
 
 - **An agent mid-turn.** Closing the workspace stops the process, and a turn
   killed halfway loses what the agent had not yet written down.
@@ -133,6 +133,9 @@ A stash has to be undoable. Two situations are refused, and the
   this: `agent.start` returns as soon as an agent is ready for input, and its
   integration reports the conversation a moment later. Stashing in that window
   would close a pane nothing could bring back.
+- **A pane hibernated by Herdr Hibernate.** Hibernate owns the conversation
+  reference while Herdr reports the pane as an ordinary process. Wake the pane
+  first so Stash can capture that reference instead of restoring a plain shell.
 
 Everything else that cannot be captured — a layout this version cannot read, a
 missing tab — aborts the stash with the workspace **untouched**. The record is

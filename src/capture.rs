@@ -327,6 +327,18 @@ impl Builder<'_, '_> {
     }
 
     fn record(&mut self, pane: &LivePane) -> Result<Pane> {
+        let process_info = herdr::process_info(self.client, &pane.pane_id).ok();
+        if !self.force
+            && process_info
+                .as_ref()
+                .is_some_and(herdr::ProcessInfo::is_herdr_hibernate_stub)
+        {
+            bail!(
+                "{} is hibernated by Herdr Hibernate — wake it before stashing so its conversation can be preserved",
+                pane.pane_id
+            );
+        }
+
         let kind = pane.agent.as_deref().filter(|kind| !kind.is_empty());
         let session = pane
             .agent_session
@@ -344,7 +356,7 @@ impl Builder<'_, '_> {
                     .cloned()
                     .flatten()
                     .or_else(|| pane.terminal_title_stripped.clone()),
-                argv: argv(self.client, &pane.pane_id, kind),
+                argv: argv(process_info.as_ref(), kind),
             }),
             // An agent nobody can resume. See the note on [`capture`].
             (Some(kind), None) if !self.force => bail!(
@@ -379,8 +391,8 @@ impl Builder<'_, '_> {
 /// argv. So this yields the flags when the OS kept them and nothing when it did
 /// not — and never guesses, because a captured line is only used when its program
 /// name is still the agent's own.
-fn argv(client: &mut Client, pane_id: &str, kind: &str) -> Vec<String> {
-    let Ok(info) = herdr::process_info(client, pane_id) else {
+fn argv(info: Option<&herdr::ProcessInfo>, kind: &str) -> Vec<String> {
+    let Some(info) = info else {
         return Vec::new();
     };
     let Some(leader) = info.leader() else {
