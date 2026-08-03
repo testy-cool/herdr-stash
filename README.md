@@ -101,7 +101,7 @@ and editable by hand.
 |:--|:--|
 | Tabs, split tree, every ratio | Exactly — verified against `session.snapshot`, rect for rect |
 | Each pane's directory | Exactly, including panes with no agent |
-| A recognised agent's conversation | Resumed with the same reference Herdr's own restart uses (`pi --session`, `claude --resume`, `omp --resume=`, `codex resume`, …) |
+| A recognised agent's conversation | Resumed with the same reference Herdr's own restart uses (`pi --session`, `claude --resume`, `omp --resume=`, `codex resume`, …); a pane-scoped handoff keeps it capturable during immediate re-stash |
 | An agent parked by Herdr Hibernate | Its durable session and safe resume flags are imported directly, without waking it first |
 | Panes owned by other plugins | Reopened through `plugin.pane.open` against the pane they sat beside, and swapped back if they were on the left |
 | Pane labels you set | Reapplied |
@@ -125,18 +125,19 @@ loop with an `rm` in it — is worse than a prompt in the right directory.
 
 ## When it refuses
 
-A stash has to be undoable. Three situations are refused, and the
-*Stash: stop this workspace even mid-turn* action waives all three:
+A stash has to be undoable. Two situations are refused, and the
+*Stash: stop this workspace even mid-turn* action waives both:
 
 - **An agent mid-turn.** Closing the workspace stops the process, and a turn
   killed halfway loses what the agent had not yet written down.
-- **An agent that has not reported its conversation.** There is a real window for
-  this: `agent.start` returns as soon as an agent is ready for input, and its
-  integration reports the conversation a moment later. Stashing in that window
-  would close a pane nothing could bring back.
+- **An agent with no recoverable conversation.** Live non-empty `agent_session`,
+  a matching restore handoff, and force-free evidence are checked before Stash
+  refuses. A restore handoff covers the short window before Herdr republishes
+  the session.
 - **A Hibernate stub without usable saved metadata.** A normal hibernated pane
-  is imported directly without waking it. If Hibernate's state file is missing,
-  malformed, or belongs to another pane, Stash refuses instead of guessing.
+  is imported directly without waking it. If state is unavailable, Stash accepts
+  only the exact generated stub for that pane and its verified `exec` command;
+  otherwise it refuses instead of guessing.
 
 Everything else that cannot be captured — a layout this version cannot read, a
 missing tab — aborts the stash with the workspace **untouched**. The record is

@@ -78,7 +78,7 @@ pub struct Pane {
     pub agent: Option<Agent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agent {
     /// Herdr's own kind name — `pi`, `claude`, `omp` — which is what
     /// `agent.start` accepts.

@@ -20,6 +20,7 @@
 
 mod app;
 mod capture;
+mod handoff;
 mod herdr;
 mod hibernate;
 mod layout;
@@ -61,8 +62,8 @@ fn main() -> Result<()> {
 ///   killed halfway is the one thing here that destroys work rather than parking
 ///   it — the transcript keeps what the agent had already written, not what it
 ///   was about to.
-/// * An agent that has **not reported its conversation** yet, which
-///   [`capture::capture`] refuses on: nothing could resume it afterwards.
+/// * An agent with no recoverable conversation in live metadata, a restore
+///   handoff, Hibernate state, or a verified Hibernate stub.
 fn stash(force: bool) -> Result<()> {
     let context = herdr_sdk::plugin_context();
     let workspace_id = context

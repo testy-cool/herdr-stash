@@ -37,12 +37,12 @@ command = ["./bin/herdr-stash", "stash"]
 
 # Separate action rather than a prompt: an action has no TTY and therefore no way
 # to ask. The safe one refuses a workspace with an agent mid-turn, or one whose
-# agent has not reported a conversation yet; this is the same call for when
-# stopping it anyway is the point.
+# conversation is genuinely unrecoverable; restore handoffs cover the normal
+# publication delay.
 [[actions]]
 id = "stash-force"
 title = "Stash: stop this workspace even mid-turn"
-description = "Stash this workspace without checking whether an agent is mid-turn or has usable live or Hibernate session metadata."
+description = "Stash this workspace without checking whether an agent is mid-turn or has a usable conversation reference."
 contexts = ["workspace"]
 command = ["./bin/herdr-stash", "stash-force"]
 

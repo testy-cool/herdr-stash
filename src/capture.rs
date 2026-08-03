@@ -20,6 +20,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use herdr_sdk::Client;
 use herdr_sdk::model::Pane as LivePane;
 
+use crate::handoff;
 use crate::herdr::{self, PluginPane, Snapshot};
 use crate::layout::{Direction, Shape};
 use crate::record::{Agent, Attached, Node, Pane, Stash, Tab, VERSION};
@@ -51,6 +52,9 @@ pub fn stash(
 
     // Last, and only once the record is on disk.
     herdr::close_workspace(client, workspace_id).context("closing the stashed workspace")?;
+    // A successful close consumes every restore bridge in that workspace. Do
+    // this only after the stash is durable and the workspace is gone.
+    let _ = crate::store::clear_workspace_handoffs(workspace_id);
 
     // ▲ Closing a workspace moves the active one, even when the closed workspace
     // was not it — upstream discussion #1328. Stashing one workspace must not
@@ -66,11 +70,11 @@ pub fn stash(
 
 /// Build the record. Reads Herdr; changes nothing.
 ///
-/// ▲ An agent that has not reported a session aborts the capture unless `force`.
-/// Measured against 0.7.5: `agent.start` returns as soon as the agent is ready
-/// for input, and its integration reports the conversation a moment *later* — so
-/// there is a real window in which a pane has an agent and no way to resume it.
-/// Recording that pane as a shell would turn a stash into the one thing it must
+/// ▲ An agent that has no usable session in live metadata or a tightly scoped
+/// restore handoff aborts the capture unless `force`. `agent.start` returns as
+/// soon as the agent is ready for input, and its integration reports the
+/// conversation a moment later, so the handoff closes that normal timing gap.
+/// Recording a pane as a shell would turn a stash into the one thing it must
 /// never be: a close that cannot be undone. Forcing it records the shell and says
 /// so.
 pub fn capture(
@@ -333,7 +337,12 @@ impl Builder<'_, '_> {
             .is_some_and(herdr::ProcessInfo::is_herdr_hibernate_stub);
 
         let agent = if hibernated {
-            match crate::hibernate::session(&pane.pane_id, &pane.workspace_id, &pane.tab_id) {
+            match crate::hibernate::session(
+                &pane.pane_id,
+                &pane.workspace_id,
+                &pane.tab_id,
+                process_info.as_ref(),
+            ) {
                 Ok(Some(session)) => {
                     let agent = Agent {
                         kind: session.kind,
@@ -350,7 +359,7 @@ impl Builder<'_, '_> {
                         None
                     } else {
                         bail!(
-                            "Herdr Hibernate saved an unsupported {} session in {} — wake it before stashing",
+                            "Herdr Hibernate saved an unsupported {} session in {}",
                             agent.kind,
                             pane.pane_id
                         );
@@ -358,7 +367,7 @@ impl Builder<'_, '_> {
                 }
                 Ok(None) if self.force => None,
                 Ok(None) => bail!(
-                    "Herdr Hibernate has no saved session for {} — wake it before stashing",
+                    "Herdr Hibernate has no recoverable session for {}",
                     pane.pane_id
                 ),
                 Err(_) if self.force => None,
@@ -383,12 +392,27 @@ impl Builder<'_, '_> {
                         .or_else(|| pane.terminal_title_stripped.clone()),
                     argv: argv(process_info.as_ref(), kind),
                 }),
-                // An agent nobody can resume. See the note on [`capture`].
-                (Some(kind), None) if !self.force => bail!(
-                    "{kind} in {} has not reported a conversation, so stashing it would \
-                 close it for good — wait a moment, or use the force action",
-                    pane.pane_id
-                ),
+                (Some(kind), None) => {
+                    let handoff = crate::store::find_handoff(
+                        &pane.workspace_id,
+                        &pane.tab_id,
+                        &pane.pane_id,
+                        kind,
+                    );
+                    match handoff {
+                        Ok(handoff) => match handoff::resolve(pane, kind, handoff.as_ref())? {
+                            Some(agent) => Some(agent),
+                            None if self.force => None,
+                            None => bail!(
+                                "{kind} in {} has no recoverable conversation, so stashing it would \
+                             close it for good — use the force action",
+                                pane.pane_id
+                            ),
+                        },
+                        Err(_error) if self.force => None,
+                        Err(error) => return Err(error),
+                    }
+                }
                 _ => None,
             }
         };

@@ -15,11 +15,12 @@
 //!
 //! Focus is last of all, and it is the only thing here that moves the operator.
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context as _, Result};
 use herdr_sdk::Client;
 
+use crate::handoff::Handoff;
 use crate::herdr;
 use crate::record::{Agent, Attached, Node, Pane, Stash};
 
@@ -106,10 +107,25 @@ pub fn restore(
         }
     }
 
+    // The pane ids returned by create/split are enough to plant the shape, but
+    // the handoff must bind them to the exact live tab and workspace too.
+    let pane_tabs: HashMap<String, String> = if stash.agents().is_empty() {
+        HashMap::new()
+    } else {
+        let snapshot = herdr::snapshot(client).context("reading restored pane identities")?;
+        snapshot
+            .panes
+            .into_iter()
+            .filter(|pane| pane.workspace_id == workspace_id && !pane.tab_id.is_empty())
+            .map(|pane| (pane.pane_id, pane.tab_id))
+            .collect()
+    };
+
     let mut taken = herdr::agent_names(client).unwrap_or_default();
     let total = stash.agents().len();
     let mut started = 0;
     let mut resumed = 0;
+    let mut restored_agents = Vec::new();
 
     for leaves in &planted {
         for planted in leaves {
@@ -140,10 +156,21 @@ pub fn restore(
 
             let name = free_name(&agent.kind, &mut taken);
             match start(client, &name, &agent.kind, &planted.pane_id, &args) {
-                Ok(()) => resumed += 1,
+                Ok(()) => {
+                    resumed += 1;
+                    restored_agents.push((planted.pane_id.clone(), agent.clone()));
+                }
                 Err(error) => warnings.push(format!("{}: {error}", agent.kind)),
             }
         }
+    }
+
+    for (pane_id, agent) in restored_agents {
+        let tab_id = pane_tabs.get(&pane_id).with_context(|| {
+            format!("restored pane {pane_id} has no exact workspace/tab identity")
+        })?;
+        crate::store::save_handoff(Handoff::new(&workspace_id, tab_id, &pane_id, &agent)?)
+            .context("saving restored agent handoff")?;
     }
 
     for (tab, leaves) in stash.tabs.iter().zip(&planted) {
