@@ -4,7 +4,7 @@ Stash a Herdr workspace: **stop** its agents, keep its shape and their
 conversations, and restore it later from a clickable popup.
 
 ```bash
-herdr plugin install victor-software-house/herdr-stash
+herdr plugin install testy-cool/herdr-stash
 ```
 
 Herdr keeps every workspace it has ever held and rebuilds all of them on every

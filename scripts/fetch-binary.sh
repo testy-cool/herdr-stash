@@ -9,7 +9,7 @@
 # release assets are public, so there is no credential in this path at all.
 set -eu
 
-REPO="victor-software-house/herdr-stash"
+REPO="testy-cool/herdr-stash"
 BINARY="herdr-stash"
 
 # The manifest and Cargo.toml carry the same version, and the release tag is

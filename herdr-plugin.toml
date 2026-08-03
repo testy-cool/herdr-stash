@@ -1,7 +1,7 @@
 # herdr-plugin.toml — manifest for Stash.
 #
 # Install:
-#   herdr plugin install victor-software-house/herdr-stash
+#   herdr plugin install testy-cool/herdr-stash
 #
 # Local development — `plugin link` does not run [[build]] steps, so build first:
 #   cargo build --release && mkdir -p bin && cp target/release/herdr-stash bin/
