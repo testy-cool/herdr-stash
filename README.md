@@ -123,6 +123,16 @@ without its flags. Nothing is guessed.
 arbitrary process either, and a command replayed blind — a migration, a deploy, a
 loop with an `rm` in it — is worse than a prompt in the right directory.
 
+## Recovery contract
+
+Stash does the thinking. For a recognised agent it automatically exhausts exact
+pane-scoped argv, process-owned transcript fds, native metadata, pane text,
+Hibernate state or stubs, and restore handoffs. Users must not manufacture a
+message, hunt for an ID, wake a pane, understand native metadata, or choose
+force when a recoverable ID exists. Internal candidate disagreements are
+silently skipped; **force** remains an explicit escape hatch only for a truly
+unrecoverable process.
+
 ## When it refuses
 
 A stash has to be undoable. Two situations are refused, and the
