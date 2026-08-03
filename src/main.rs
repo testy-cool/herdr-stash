@@ -21,6 +21,7 @@
 mod app;
 mod capture;
 mod herdr;
+mod hibernate;
 mod layout;
 mod live;
 mod msg;

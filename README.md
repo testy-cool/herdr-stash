@@ -102,6 +102,7 @@ and editable by hand.
 | Tabs, split tree, every ratio | Exactly — verified against `session.snapshot`, rect for rect |
 | Each pane's directory | Exactly, including panes with no agent |
 | A recognised agent's conversation | Resumed with the same reference Herdr's own restart uses (`pi --session`, `claude --resume`, `omp --resume=`, `codex resume`, …) |
+| An agent parked by Herdr Hibernate | Its durable session and safe resume flags are imported directly, without waking it first |
 | Panes owned by other plugins | Reopened through `plugin.pane.open` against the pane they sat beside, and swapped back if they were on the left |
 | Pane labels you set | Reapplied |
 | **Launch flags** (`--model`, `--dangerously-skip-permissions`) | **Best effort.** See below |
@@ -133,9 +134,9 @@ A stash has to be undoable. Three situations are refused, and the
   this: `agent.start` returns as soon as an agent is ready for input, and its
   integration reports the conversation a moment later. Stashing in that window
   would close a pane nothing could bring back.
-- **A pane hibernated by Herdr Hibernate.** Hibernate owns the conversation
-  reference while Herdr reports the pane as an ordinary process. Wake the pane
-  first so Stash can capture that reference instead of restoring a plain shell.
+- **A Hibernate stub without usable saved metadata.** A normal hibernated pane
+  is imported directly without waking it. If Hibernate's state file is missing,
+  malformed, or belongs to another pane, Stash refuses instead of guessing.
 
 Everything else that cannot be captured — a layout this version cannot read, a
 missing tab — aborts the stash with the workspace **untouched**. The record is

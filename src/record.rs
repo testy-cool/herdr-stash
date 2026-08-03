@@ -135,7 +135,7 @@ impl Agent {
         let session = self.session.clone();
         let args = match self.kind.as_str() {
             "pi" | "kimi" | "opencode" | "kilo" => vec!["--session".into(), session],
-            "claude" | "cursor" | "devin" | "droid" | "hermes" | "qodercli" => {
+            "claude" | "cursor" | "devin" | "droid" | "grok" | "hermes" | "qodercli" => {
                 vec!["--resume".into(), session]
             }
             "omp" => vec![format!("--resume={session}")],
@@ -250,6 +250,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn grok_resumes_with_its_native_flag() {
+        assert_eq!(
+            agent("grok", &[]).launch(),
+            Some(vec!["--resume".into(), "/tmp/session.jsonl".into()])
+        );
+    }
+
     /// The reason argv is captured at all: a flag the operator launched with is
     /// not recoverable from anywhere else, and losing it silently downgrades the
     /// resumed agent.
@@ -261,6 +269,48 @@ mod tests {
                 "--dangerously-skip-permissions".into(),
                 "--resume".into(),
                 "/tmp/session.jsonl".into()
+            ])
+        );
+    }
+
+    #[test]
+    fn hibernate_replay_flags_survive_codex_resumption() {
+        let mut agent = agent(
+            "codex",
+            &[
+                "resume",
+                "/tmp/old-session",
+                "--model",
+                "gpt-5",
+                "-c",
+                "model_reasoning_effort=xhigh",
+                "--sandbox",
+                "workspace-write",
+                "-a",
+                "never",
+                "--yolo",
+                "-c",
+                "mcp_servers.backlog.enabled=true",
+            ],
+        );
+        agent.session = "/tmp/new-session".into();
+
+        assert_eq!(
+            agent.launch(),
+            Some(vec![
+                "--model".into(),
+                "gpt-5".into(),
+                "-c".into(),
+                "model_reasoning_effort=xhigh".into(),
+                "--sandbox".into(),
+                "workspace-write".into(),
+                "-a".into(),
+                "never".into(),
+                "--yolo".into(),
+                "-c".into(),
+                "mcp_servers.backlog.enabled=true".into(),
+                "resume".into(),
+                "/tmp/new-session".into(),
             ])
         );
     }

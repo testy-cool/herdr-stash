@@ -42,7 +42,7 @@ command = ["./bin/herdr-stash", "stash"]
 [[actions]]
 id = "stash-force"
 title = "Stash: stop this workspace even mid-turn"
-description = "Stash this workspace without checking whether an agent is mid-turn, missing a conversation, or hibernated."
+description = "Stash this workspace without checking whether an agent is mid-turn or has usable live or Hibernate session metadata."
 contexts = ["workspace"]
 command = ["./bin/herdr-stash", "stash-force"]
 

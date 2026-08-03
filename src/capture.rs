@@ -328,43 +328,69 @@ impl Builder<'_, '_> {
 
     fn record(&mut self, pane: &LivePane) -> Result<Pane> {
         let process_info = herdr::process_info(self.client, &pane.pane_id).ok();
-        if !self.force
-            && process_info
-                .as_ref()
-                .is_some_and(herdr::ProcessInfo::is_herdr_hibernate_stub)
-        {
-            bail!(
-                "{} is hibernated by Herdr Hibernate — wake it before stashing so its conversation can be preserved",
-                pane.pane_id
-            );
-        }
-
-        let kind = pane.agent.as_deref().filter(|kind| !kind.is_empty());
-        let session = pane
-            .agent_session
+        let hibernated = process_info
             .as_ref()
-            .filter(|session| !session.value.is_empty());
+            .is_some_and(herdr::ProcessInfo::is_herdr_hibernate_stub);
 
-        let agent = match (kind, session) {
-            (Some(kind), Some(session)) => Some(Agent {
-                kind: kind.to_owned(),
-                session_kind: session.kind.clone(),
-                session: session.value.clone(),
-                title: pane
-                    .tokens
-                    .get("session_title")
-                    .cloned()
-                    .flatten()
-                    .or_else(|| pane.terminal_title_stripped.clone()),
-                argv: argv(process_info.as_ref(), kind),
-            }),
-            // An agent nobody can resume. See the note on [`capture`].
-            (Some(kind), None) if !self.force => bail!(
-                "{kind} in {} has not reported a conversation, so stashing it would \
+        let agent = if hibernated {
+            match crate::hibernate::session(&pane.pane_id, &pane.workspace_id, &pane.tab_id) {
+                Ok(Some(session)) => {
+                    let agent = Agent {
+                        kind: session.kind,
+                        session_kind: "id".into(),
+                        session: session.id,
+                        title: session
+                            .title
+                            .or_else(|| pane.terminal_title_stripped.clone()),
+                        argv: session.argv,
+                    };
+                    if agent.launch().is_some() {
+                        Some(agent)
+                    } else if self.force {
+                        None
+                    } else {
+                        bail!(
+                            "Herdr Hibernate saved an unsupported {} session in {} — wake it before stashing",
+                            agent.kind,
+                            pane.pane_id
+                        );
+                    }
+                }
+                Ok(None) if self.force => None,
+                Ok(None) => bail!(
+                    "Herdr Hibernate has no saved session for {} — wake it before stashing",
+                    pane.pane_id
+                ),
+                Err(_) if self.force => None,
+                Err(error) => return Err(error),
+            }
+        } else {
+            let kind = pane.agent.as_deref().filter(|kind| !kind.is_empty());
+            let session = pane
+                .agent_session
+                .as_ref()
+                .filter(|session| !session.value.is_empty());
+            match (kind, session) {
+                (Some(kind), Some(session)) => Some(Agent {
+                    kind: kind.to_owned(),
+                    session_kind: session.kind.clone(),
+                    session: session.value.clone(),
+                    title: pane
+                        .tokens
+                        .get("session_title")
+                        .cloned()
+                        .flatten()
+                        .or_else(|| pane.terminal_title_stripped.clone()),
+                    argv: argv(process_info.as_ref(), kind),
+                }),
+                // An agent nobody can resume. See the note on [`capture`].
+                (Some(kind), None) if !self.force => bail!(
+                    "{kind} in {} has not reported a conversation, so stashing it would \
                  close it for good — wait a moment, or use the force action",
-                pane.pane_id
-            ),
-            _ => None,
+                    pane.pane_id
+                ),
+                _ => None,
+            }
         };
 
         Ok(Pane {
